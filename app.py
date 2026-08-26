@@ -104,12 +104,14 @@ def select_store(page, store: str) -> None:
 
 def fetch_store(page, store: str, download_dir: str) -> float:
     page.goto(MENU_MIX_URL, wait_until="networkidle")
-    page.get_by_text("Run Report", exact=True).wait_for(timeout=20000)
+    run_report = page.locator("text='Run Report'").filter(visible=True).first
+    run_report.wait_for(timeout=20000)
     select_store(page, store)
-    page.get_by_text("Run Report", exact=True).click()
-    page.get_by_text("CSV", exact=True).wait_for(timeout=60000)
+    run_report.click()
+    csv_export = page.locator("text=CSV").filter(visible=True).first
+    csv_export.wait_for(timeout=60000)
     with page.expect_download(timeout=60000) as info:
-        page.get_by_text("CSV", exact=True).click()
+        csv_export.click()
     path = os.path.join(download_dir, f"menu-mix-{store}.csv")
     info.value.save_as(path)
     with open(path, encoding="utf-8-sig", newline="") as handle:
@@ -118,7 +120,7 @@ def fetch_store(page, store: str, download_dir: str) -> float:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "tray-selectors-1"}
+    return {"status": "ok", "release": "visible-report-controls-1"}
 
 
 @app.post("/fetch-appetizers")
