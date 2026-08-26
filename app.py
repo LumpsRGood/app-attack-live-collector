@@ -84,6 +84,13 @@ def select_store(page, store: str) -> None:
     page.click("div:has-text('Sites :') + div, button:has-text('Sites'), .sites-dropdown-selector")
     page.wait_for_timeout(1000)
 
+    # TRAY keeps prior site selections when the report page is reused. Clear
+    # every selected site so each Menu Mix report is truly location-specific.
+    checked_sites = page.locator("input[type='checkbox']:checked:visible")
+    for index in range(checked_sites.count() - 1, -1, -1):
+        checked_sites.nth(index).uncheck(force=True)
+    page.wait_for_timeout(400)
+
     try:
         page.click(f"text=IHOP #{store}", timeout=2000)
     except Exception:
@@ -120,7 +127,7 @@ def fetch_store(page, store: str, download_dir: str) -> float:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "visible-report-controls-1"}
+    return {"status": "ok", "release": "single-site-reports-1"}
 
 
 @app.post("/fetch-appetizers")
