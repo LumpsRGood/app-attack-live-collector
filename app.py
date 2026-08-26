@@ -4,6 +4,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 from playwright.sync_api import sync_playwright
 from csv_parser import extract_appetizer_percent
@@ -13,6 +14,12 @@ MENU_MIX_URL = f"{TRAY_HOME}/tray/admin/reports?page=menuMix"
 CENTRAL = ZoneInfo("America/Chicago")
 
 app = FastAPI(title="App Attack Live Collector")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://app-attack-live.lumpsr.chatgpt.site"],
+    allow_methods=["POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
+)
 
 
 class FetchRequest(BaseModel):
