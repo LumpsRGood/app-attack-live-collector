@@ -99,7 +99,7 @@ def fetch_store(page, store: str, download_dir: str) -> float:
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "release": "chromium-fix-1"}
 
 
 @app.post("/fetch-appetizers")
