@@ -1,4 +1,6 @@
 import os
+import glob
+import shutil
 import tempfile
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -20,6 +22,17 @@ app.add_middleware(
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
+
+
+def chromium_executable() -> str | None:
+    candidates = [
+        *glob.glob("/opt/render/.cache/ms-playwright/chromium-*/chrome-linux*/chrome"),
+        *glob.glob("/opt/render/.cache/ms-playwright/chromium_headless_shell-*/chrome-linux*/headless_shell"),
+        shutil.which("chromium"),
+        shutil.which("chromium-browser"),
+        shutil.which("google-chrome"),
+    ]
+    return next((path for path in candidates if path and os.path.isfile(path)), None)
 
 
 class FetchRequest(BaseModel):
@@ -100,7 +113,11 @@ def fetch_appetizers(request: FetchRequest):
     with tempfile.TemporaryDirectory() as temp_dir:
         try:
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+                executable = chromium_executable()
+                launch_options = {"headless": True, "args": ["--no-sandbox"]}
+                if executable:
+                    launch_options["executable_path"] = executable
+                browser = playwright.chromium.launch(**launch_options)
                 context = browser.new_context(accept_downloads=True)
                 page = context.new_page()
                 try:
@@ -116,6 +133,9 @@ def fetch_appetizers(request: FetchRequest):
         except ValueError as exc:
             raise HTTPException(401, str(exc)) from exc
         except Exception as exc:
-            raise HTTPException(502, f"TRAY collector could not complete the request: {exc}") from exc
+            message = str(exc)
+            if "Executable doesn't exist" in message:
+                message = "The report browser is temporarily unavailable. Please try again in a moment."
+            raise HTTPException(502, message) from exc
 
     return {"updatedAt": datetime.now(CENTRAL).isoformat(), "results": results}
