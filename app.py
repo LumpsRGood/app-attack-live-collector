@@ -80,24 +80,26 @@ def login(page, email: str, password: str) -> None:
 
 
 def select_store(page, store: str) -> None:
-    site_box = page.locator("text=Sites :").locator("..").first
+    page.click("text=Sites :")
+    page.click("div:has-text('Sites :') + div, button:has-text('Sites'), .sites-dropdown-selector")
+    page.wait_for_timeout(1000)
+
     try:
-        site_box.locator("div, button, input").last.click()
+        page.click(f"text=IHOP #{store}", timeout=2000)
     except Exception:
-        page.locator("[class*='site'], [id*='site']").filter(visible=True).first.click()
-    page.wait_for_timeout(700)
-    search = page.locator("input[type='text']:visible").filter(
-        has_not=page.locator("[id*='Date'], [name*='date']")
-    )
-    if search.count():
-        search.last.fill(store)
-        page.wait_for_timeout(700)
-    matches = page.get_by_text(f"IHOP #{store}", exact=True)
-    if matches.count() == 0:
-        raise ValueError(f"IHOP #{store} is not available to this TRAY account.")
-    matches.first.click()
+        search_boxes = page.locator(
+            "input[type='text']:visible:not([id*='Date']):not([name*='date']):not([id*='ate']):not([id*='Check'])"
+        )
+        if search_boxes.count() > 0:
+            search_boxes.first.fill(store)
+        page.wait_for_timeout(1500)
+        matches = page.locator(f"text=IHOP #{store}").filter(visible=True)
+        if matches.count() == 0:
+            raise ValueError(f"IHOP #{store} is not available to this TRAY account.")
+        matches.first.click()
+
     page.keyboard.press("Escape")
-    page.wait_for_timeout(700)
+    page.wait_for_timeout(500)
 
 
 def fetch_store(page, store: str, download_dir: str) -> float:
@@ -116,7 +118,7 @@ def fetch_store(page, store: str, download_dir: str) -> float:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "chromium-fix-2"}
+    return {"status": "ok", "release": "tray-selectors-1"}
 
 
 @app.post("/fetch-appetizers")
