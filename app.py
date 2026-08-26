@@ -1,6 +1,8 @@
 import os
 import glob
 import shutil
+import subprocess
+import sys
 import tempfile
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -10,6 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 from playwright.sync_api import sync_playwright
 from csv_parser import extract_appetizer_percent
+
+os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
 
 TRAY_HOME = "https://hq.dine.tray.com"
 MENU_MIX_URL = f"{TRAY_HOME}/tray/admin/reports?page=menuMix"
@@ -33,6 +37,19 @@ def chromium_executable() -> str | None:
         shutil.which("google-chrome"),
     ]
     return next((path for path in candidates if path and os.path.isfile(path)), None)
+
+
+def ensure_chromium() -> None:
+    expected = os.path.join(
+        os.path.dirname(__file__),
+        ".venv/lib/python3.12/site-packages/playwright/driver/package/.local-browsers",
+    )
+    if glob.glob(os.path.join(expected, "chromium_headless_shell-*", "chrome-linux*", "headless_shell")):
+        return
+    subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
+
+
+ensure_chromium()
 
 
 class FetchRequest(BaseModel):
@@ -99,7 +116,7 @@ def fetch_store(page, store: str, download_dir: str) -> float:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "chromium-fix-1"}
+    return {"status": "ok", "release": "chromium-fix-2"}
 
 
 @app.post("/fetch-appetizers")
