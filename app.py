@@ -91,19 +91,22 @@ def select_store(page, store: str) -> None:
         checked_sites.nth(index).uncheck(force=True)
     page.wait_for_timeout(400)
 
-    try:
-        page.click(f"text=IHOP #{store}", timeout=2000)
-    except Exception:
+    exact_label = f"IHOP #{store}"
+    matches = page.get_by_text(exact_label, exact=True).filter(visible=True)
+    if matches.count() == 0:
         search_boxes = page.locator(
             "input[type='text']:visible:not([id*='Date']):not([name*='date']):not([id*='ate']):not([id*='Check'])"
         )
         if search_boxes.count() > 0:
             search_boxes.first.fill(store)
         page.wait_for_timeout(1500)
-        matches = page.locator(f"text=IHOP #{store}").filter(visible=True)
+        matches = page.get_by_text(exact_label, exact=True).filter(visible=True)
         if matches.count() == 0:
             raise ValueError(f"IHOP #{store} is not available to this TRAY account.")
-        matches.first.click()
+
+    # Exact matching is required for three-digit locations. Without it,
+    # IHOP #123 can also match IHOP #1234, #1235, and similar locations.
+    matches.first.click()
 
     page.keyboard.press("Escape")
     page.wait_for_timeout(500)
@@ -127,7 +130,7 @@ def fetch_store(page, store: str, download_dir: str) -> dict[str, float | int]:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "app-counts-and-alerts-1"}
+    return {"status": "ok", "release": "exact-store-labels-1"}
 
 
 @app.post("/fetch-appetizers")
