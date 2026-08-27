@@ -127,7 +127,7 @@ def fetch_store(page, store: str, download_dir: str) -> dict[str, float | int]:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "single-site-reports-1"}
+    return {"status": "ok", "release": "app-counts-and-alerts-1"}
 
 
 @app.post("/fetch-appetizers")
