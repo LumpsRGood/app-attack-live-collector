@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
 from playwright.sync_api import sync_playwright
-from csv_parser import extract_appetizer_percent
+from csv_parser import extract_appetizer_metrics
 
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
 
@@ -109,7 +109,7 @@ def select_store(page, store: str) -> None:
     page.wait_for_timeout(500)
 
 
-def fetch_store(page, store: str, download_dir: str) -> float:
+def fetch_store(page, store: str, download_dir: str) -> dict[str, float | int]:
     page.goto(MENU_MIX_URL, wait_until="networkidle")
     run_report = page.locator("text='Run Report'").filter(visible=True).first
     run_report.wait_for(timeout=20000)
@@ -122,7 +122,7 @@ def fetch_store(page, store: str, download_dir: str) -> float:
     path = os.path.join(download_dir, f"menu-mix-{store}.csv")
     info.value.save_as(path)
     with open(path, encoding="utf-8-sig", newline="") as handle:
-        return extract_appetizer_percent(handle.read())
+        return extract_appetizer_metrics(handle.read())
 
 
 @app.get("/health")
@@ -152,8 +152,13 @@ def fetch_appetizers(request: FetchRequest):
                     login(page, request.email, request.password)
                     for store in clean_stores:
                         try:
-                            value = fetch_store(page, store, temp_dir)
-                            results.append({"store": store, "appetizerPercent": value, "status": "ok"})
+                            metrics = fetch_store(page, store, temp_dir)
+                            results.append({
+                                "store": store,
+                                "appetizerCount": metrics["count"],
+                                "appetizerPercent": metrics["percent"],
+                                "status": "ok",
+                            })
                         except Exception as exc:
                             results.append({"store": store, "appetizerPercent": 0, "status": "error", "message": str(exc)})
                 finally:
