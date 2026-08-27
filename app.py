@@ -79,7 +79,7 @@ def login(page, email: str, password: str) -> None:
         raise ValueError("TRAY rejected the email or password.")
 
 
-def select_store(page, store: str) -> None:
+def select_store(page, store: str) -> str:
     page.click("text=Sites :")
     page.click("div:has-text('Sites :') + div, button:has-text('Sites'), .sites-dropdown-selector")
     page.wait_for_timeout(1000)
@@ -91,32 +91,46 @@ def select_store(page, store: str) -> None:
         checked_sites.nth(index).uncheck(force=True)
     page.wait_for_timeout(400)
 
-    exact_label = f"IHOP #{store}"
-    matches = page.get_by_text(exact_label, exact=True).filter(visible=True)
-    if matches.count() == 0:
+    candidates = [store]
+    if len(store) == 3:
+        candidates.append(store.zfill(4))
+
+    def find_exact_match():
+        for candidate in candidates:
+            matches = page.get_by_text(f"IHOP #{candidate}", exact=True).filter(visible=True)
+            if matches.count() > 0:
+                return candidate, matches
+        return None, None
+
+    resolved_store, matches = find_exact_match()
+    if matches is None:
         search_boxes = page.locator(
             "input[type='text']:visible:not([id*='Date']):not([name*='date']):not([id*='ate']):not([id*='Check'])"
         )
         if search_boxes.count() > 0:
-            search_boxes.first.fill(store)
-        page.wait_for_timeout(1500)
-        matches = page.get_by_text(exact_label, exact=True).filter(visible=True)
-        if matches.count() == 0:
+            for candidate in candidates:
+                search_boxes.first.fill(candidate)
+                page.wait_for_timeout(1000)
+                resolved_store, matches = find_exact_match()
+                if matches is not None:
+                    break
+        if matches is None:
             raise ValueError(f"IHOP #{store} is not available to this TRAY account.")
 
-    # Exact matching is required for three-digit locations. Without it,
-    # IHOP #123 can also match IHOP #1234, #1235, and similar locations.
+    # Exact matching avoids collisions such as #123 and #1234. TRAY stores
+    # some three-digit locations with a leading zero, such as #413 as #0413.
     matches.first.click()
 
     page.keyboard.press("Escape")
     page.wait_for_timeout(500)
+    return resolved_store
 
 
-def fetch_store(page, store: str, download_dir: str) -> dict[str, float | int]:
+def fetch_store(page, store: str, download_dir: str) -> tuple[dict[str, float | int], str]:
     page.goto(MENU_MIX_URL, wait_until="networkidle")
     run_report = page.locator("text='Run Report'").filter(visible=True).first
     run_report.wait_for(timeout=20000)
-    select_store(page, store)
+    resolved_store = select_store(page, store)
     run_report.click()
     csv_export = page.locator("text=CSV").filter(visible=True).first
     csv_export.wait_for(timeout=60000)
@@ -125,12 +139,12 @@ def fetch_store(page, store: str, download_dir: str) -> dict[str, float | int]:
     path = os.path.join(download_dir, f"menu-mix-{store}.csv")
     info.value.save_as(path)
     with open(path, encoding="utf-8-sig", newline="") as handle:
-        return extract_appetizer_metrics(handle.read())
+        return extract_appetizer_metrics(handle.read()), resolved_store
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "exact-store-labels-1"}
+    return {"status": "ok", "release": "zero-padded-store-labels-1"}
 
 
 @app.post("/fetch-appetizers")
@@ -155,9 +169,9 @@ def fetch_appetizers(request: FetchRequest):
                     login(page, request.email, request.password)
                     for store in clean_stores:
                         try:
-                            metrics = fetch_store(page, store, temp_dir)
+                            metrics, resolved_store = fetch_store(page, store, temp_dir)
                             results.append({
-                                "store": store,
+                                "store": resolved_store,
                                 "appetizerCount": metrics["count"],
                                 "appetizerPercent": metrics["percent"],
                                 "status": "ok",
