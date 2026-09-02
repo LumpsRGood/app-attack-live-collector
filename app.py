@@ -267,7 +267,7 @@ def fetch_overnight_performance(request: OvernightRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "zero-padded-store-labels-1"}
+    return {"status": "ok", "release": "visible-sites-control-1"}
 
 
 @app.post("/fetch-appetizers")
