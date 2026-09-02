@@ -227,16 +227,13 @@ def summarize_overnight_csv(path: str, store: str) -> tuple[str, list[dict]]:
 
 
 def fetch_labor_summary(page, store: str, download_dir: str) -> tuple[str, list[dict], str]:
-    page.goto(f"{TRAY_HOME}/tray/admin/reports", wait_until="networkidle")
-    labor_tab = page.get_by_text("Labor Summary", exact=True).filter(visible=True).first
-    labor_tab.wait_for(state="visible", timeout=20000)
-    labor_tab.click()
-    page.wait_for_timeout(1200)
-    page.get_by_text("Run Report", exact=True).filter(visible=True).first.wait_for(state="visible", timeout=20000)
+    page.goto(LABOR_SUMMARY_URL, wait_until="domcontentloaded")
+    run_report = page.locator("text='Run Report'").filter(visible=True).first
+    run_report.wait_for(state="visible", timeout=30000)
     select_option_by_label(page, "Period :", "Last Week")
     select_option_by_label(page, "Group By :", "Hour")
     resolved_store = select_store(page, store)
-    page.get_by_text("Run Report", exact=True).filter(visible=True).first.click()
+    run_report.click()
     csv_export = page.get_by_text("CSV", exact=True).filter(visible=True).first
     csv_export.wait_for(timeout=60000)
     with page.expect_download(timeout=60000) as info:
@@ -285,7 +282,7 @@ def fetch_overnight_performance(request: OvernightRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "labor-tab-navigation-1"}
+    return {"status": "ok", "release": "exact-labor-summary-url-1"}
 
 
 @app.post("/fetch-appetizers")
