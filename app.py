@@ -1,10 +1,11 @@
 import os
+import csv
 import glob
 import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
@@ -17,12 +18,13 @@ os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
 
 TRAY_HOME = "https://hq.dine.tray.com"
 MENU_MIX_URL = f"{TRAY_HOME}/tray/admin/reports?page=menuMix"
+LABOR_SUMMARY_URL = f"{TRAY_HOME}/tray/admin/reports?page=laborSummary"
 CENTRAL = ZoneInfo("America/Chicago")
 
 app = FastAPI(title="App Attack Live Collector")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://app-attack-live.lumpsr.chatgpt.site"],
+    allow_origins=["https://app-attack-live.lumpsr.chatgpt.site", "https://tracker-24-2-validity.lumpsr.chatgpt.site"],
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
@@ -56,6 +58,11 @@ class FetchRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=1)
     stores: list[str] = Field(min_length=1, max_length=40)
+
+
+class OvernightRequest(FetchRequest):
+    period: str = "Last Week"
+    groupBy: str = "Hour"
 
 
 def visible(page, selector: str) -> bool:
@@ -140,6 +147,119 @@ def fetch_store(page, store: str, download_dir: str) -> tuple[dict[str, float | 
     info.value.save_as(path)
     with open(path, encoding="utf-8-sig", newline="") as handle:
         return extract_appetizer_metrics(handle.read()), resolved_store
+
+
+
+def select_option_by_label(page, label_text: str, option_text: str) -> None:
+    label = page.get_by_text(label_text, exact=True).filter(visible=True)
+    if label.count() > 0:
+        container = label.first.locator("xpath=following-sibling::*[1]")
+        native = container.locator("select")
+        if native.count() > 0:
+            native.first.select_option(label=option_text)
+            return
+        container.click()
+    else:
+        page.get_by_text(label_text).filter(visible=True).first.click()
+    page.get_by_text(option_text, exact=True).filter(visible=True).first.click()
+    page.keyboard.press("Escape")
+
+
+def parse_money(value: str) -> float:
+    cleaned = (value or "").replace("$", "").replace(",", "").strip()
+    try:
+        return float(cleaned or 0)
+    except ValueError:
+        return 0.0
+
+
+def parse_hour(value: str) -> datetime | None:
+    start = (value or "").split(" to ", 1)[0].strip()
+    try:
+        return datetime.strptime(start, "%Y-%m-%d %I:%M %p")
+    except ValueError:
+        return None
+
+
+def summarize_overnight_csv(path: str, store: str) -> tuple[str, list[dict]]:
+    with open(path, encoding="utf-8-sig", newline="") as handle:
+        source = list(csv.DictReader(handle))
+    dated = [(parse_hour(row.get("Date", "")), row) for row in source if row.get("Date") != "Total"]
+    dated = [(stamp, row) for stamp, row in dated if stamp is not None]
+    if not dated:
+        raise ValueError(f"Labor Summary returned no hourly data for IHOP #{store}.")
+    latest = max(stamp for stamp, _ in dated)
+    week_ending = latest.date() - timedelta(days=(latest.weekday() - 6) % 7)
+    targets = {"Friday": week_ending - timedelta(days=2), "Saturday": week_ending - timedelta(days=1)}
+    rows = []
+    for night, target in targets.items():
+        selected = [row for stamp, row in dated if stamp.date() == target and 0 <= stamp.hour < 6]
+        sales = sum(parse_money(row.get("Net Sales", "")) for row in selected)
+        wages = sum(parse_money(row.get("Total Wages", "")) for row in selected)
+        hours = sum(parse_money(row.get("Total Hours", "")) for row in selected)
+        overtime = sum(parse_money(row.get("Overtime Wages", "")) for row in selected)
+        rows.append({
+            "store": store,
+            "night": night,
+            "overnightSales": round(sales, 2),
+            "laborCost": round(wages, 2),
+            "laborHours": round(hours, 2),
+            "overtimeWages": round(overtime, 2),
+        })
+    return week_ending.isoformat(), rows
+
+
+def fetch_labor_summary(page, store: str, download_dir: str) -> tuple[str, list[dict], str]:
+    page.goto(LABOR_SUMMARY_URL, wait_until="networkidle")
+    page.get_by_text("Run Report", exact=True).filter(visible=True).first.wait_for(timeout=20000)
+    select_option_by_label(page, "Period :", "Last Week")
+    select_option_by_label(page, "Group By :", "Hour")
+    resolved_store = select_store(page, store)
+    page.get_by_text("Run Report", exact=True).filter(visible=True).first.click()
+    csv_export = page.get_by_text("CSV", exact=True).filter(visible=True).first
+    csv_export.wait_for(timeout=60000)
+    with page.expect_download(timeout=60000) as info:
+        csv_export.click()
+    path = os.path.join(download_dir, f"labor-summary-{store}.csv")
+    info.value.save_as(path)
+    week_ending, rows = summarize_overnight_csv(path, resolved_store)
+    return week_ending, rows, resolved_store
+
+
+@app.post("/fetch-overnight-performance")
+def fetch_overnight_performance(request: OvernightRequest):
+    clean_stores = list(dict.fromkeys("".join(ch for ch in store if ch.isdigit()) for store in request.stores))
+    clean_stores = [store for store in clean_stores if store]
+    if not clean_stores:
+        raise HTTPException(400, "No valid store numbers were supplied.")
+
+    rows = []
+    week_ending = None
+    with tempfile.TemporaryDirectory() as temp_dir:
+        try:
+            with sync_playwright() as playwright:
+                executable = chromium_executable()
+                launch_options = {"headless": True, "args": ["--no-sandbox"]}
+                if executable:
+                    launch_options["executable_path"] = executable
+                browser = playwright.chromium.launch(**launch_options)
+                context = browser.new_context(accept_downloads=True)
+                page = context.new_page()
+                try:
+                    login(page, request.email, request.password)
+                    for store in clean_stores:
+                        store_week_ending, store_rows, _ = fetch_labor_summary(page, store, temp_dir)
+                        if week_ending and week_ending != store_week_ending:
+                            raise ValueError("TRAY returned different Last Week periods across locations.")
+                        week_ending = store_week_ending
+                        rows.extend(store_rows)
+                finally:
+                    browser.close()
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, str(exc)) from exc
+    return {"weekEnding": week_ending, "rows": rows}
 
 
 @app.get("/health")
