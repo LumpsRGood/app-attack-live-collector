@@ -193,21 +193,35 @@ def summarize_overnight_csv(path: str, store: str) -> tuple[str, list[dict]]:
         raise ValueError(f"Labor Summary returned no hourly data for IHOP #{store}.")
     latest = max(stamp for stamp, _ in dated)
     week_ending = latest.date() - timedelta(days=(latest.weekday() - 6) % 7)
-    targets = {"Friday": week_ending - timedelta(days=2), "Saturday": week_ending - timedelta(days=1)}
+    # Operational Friday runs into Saturday morning; operational Saturday
+    # runs into Sunday morning (the official week-ending date).
+    targets = {"Friday": week_ending - timedelta(days=1), "Saturday": week_ending}
     rows = []
     for night, target in targets.items():
-        selected = [row for stamp, row in dated if stamp.date() == target and 0 <= stamp.hour < 6]
-        sales = sum(parse_money(row.get("Net Sales", "")) for row in selected)
-        wages = sum(parse_money(row.get("Total Wages", "")) for row in selected)
-        hours = sum(parse_money(row.get("Total Hours", "")) for row in selected)
-        overtime = sum(parse_money(row.get("Overtime Wages", "")) for row in selected)
+        by_hour = {stamp.hour: row for stamp, row in dated if stamp.date() == target and 0 <= stamp.hour < 6}
+        hourly = []
+        for hour in range(6):
+            row = by_hour.get(hour, {})
+            hourly.append({
+                "hour": hour,
+                "netSales": round(parse_money(row.get("Net Sales", "")), 2),
+                "totalWages": round(parse_money(row.get("Total Wages", "")), 2),
+                "laborHours": round(parse_money(row.get("Total Hours", "")), 2),
+                "overtimeWages": round(parse_money(row.get("Overtime Wages", "")), 2),
+            })
+        sales = sum(item["netSales"] for item in hourly)
+        wages = sum(item["totalWages"] for item in hourly)
+        hours = sum(item["laborHours"] for item in hourly)
+        overtime = sum(item["overtimeWages"] for item in hourly)
         rows.append({
             "store": store,
             "night": night,
+            "calendarDate": target.isoformat(),
             "overnightSales": round(sales, 2),
             "laborCost": round(wages, 2),
             "laborHours": round(hours, 2),
             "overtimeWages": round(overtime, 2),
+            "hourly": hourly,
         })
     return week_ending.isoformat(), rows
 
@@ -267,7 +281,7 @@ def fetch_overnight_performance(request: OvernightRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "visible-sites-control-1"}
+    return {"status": "ok", "release": "operational-nights-hourly-1"}
 
 
 @app.post("/fetch-appetizers")
