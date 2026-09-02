@@ -87,8 +87,11 @@ def login(page, email: str, password: str) -> None:
 
 
 def select_store(page, store: str) -> str:
-    page.click("text=Sites :")
-    page.click("div:has-text('Sites :') + div, button:has-text('Sites'), .sites-dropdown-selector")
+    sites_label = page.get_by_text("Sites :", exact=True).filter(visible=True).first
+    sites_label.wait_for(state="visible", timeout=15000)
+    sites_control = sites_label.locator("xpath=following-sibling::*[1]")
+    sites_control.wait_for(state="visible", timeout=15000)
+    sites_control.click()
     page.wait_for_timeout(1000)
 
     # TRAY keeps prior site selections when the report page is reused. Clear
