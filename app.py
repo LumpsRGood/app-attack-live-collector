@@ -227,8 +227,12 @@ def summarize_overnight_csv(path: str, store: str) -> tuple[str, list[dict]]:
 
 
 def fetch_labor_summary(page, store: str, download_dir: str) -> tuple[str, list[dict], str]:
-    page.goto(LABOR_SUMMARY_URL, wait_until="networkidle")
-    page.get_by_text("Run Report", exact=True).filter(visible=True).first.wait_for(timeout=20000)
+    page.goto(f"{TRAY_HOME}/tray/admin/reports", wait_until="networkidle")
+    labor_tab = page.get_by_text("Labor Summary", exact=True).filter(visible=True).first
+    labor_tab.wait_for(state="visible", timeout=20000)
+    labor_tab.click()
+    page.wait_for_timeout(1200)
+    page.get_by_text("Run Report", exact=True).filter(visible=True).first.wait_for(state="visible", timeout=20000)
     select_option_by_label(page, "Period :", "Last Week")
     select_option_by_label(page, "Group By :", "Hour")
     resolved_store = select_store(page, store)
@@ -281,7 +285,7 @@ def fetch_overnight_performance(request: OvernightRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "operational-nights-hourly-1"}
+    return {"status": "ok", "release": "labor-tab-navigation-1"}
 
 
 @app.post("/fetch-appetizers")
