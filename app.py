@@ -1,11 +1,14 @@
-import os
+import base64
 import csv
 import glob
+import io
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
-from datetime import datetime, timedelta
+import time
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, HTTPException
@@ -19,6 +22,8 @@ os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")
 TRAY_HOME = "https://hq.dine.tray.com"
 MENU_MIX_URL = f"{TRAY_HOME}/tray/admin/reports?page=menuMix"
 LABOR_SUMMARY_URL = f"{TRAY_HOME}/tray/admin/reports?page=laborSummary"
+ORDERS_URL = f"{TRAY_HOME}/tray/admin/reports?page=ordersListNew"
+CHECKS_URL = f"{TRAY_HOME}/tray/admin/reports?page=closeTabs"
 CENTRAL = ZoneInfo("America/Chicago")
 
 app = FastAPI(title="App Attack Live Collector")
@@ -63,6 +68,10 @@ class FetchRequest(BaseModel):
 class OvernightRequest(FetchRequest):
     period: str = "Last Week"
     groupBy: str = "Hour"
+
+
+class DailyReportsRequest(FetchRequest):
+    business_date: date = Field(alias="businessDate")
 
 
 def visible(page, selector: str) -> bool:
@@ -166,6 +175,134 @@ def select_option_by_label(page, label_text: str, option_text: str) -> None:
         page.get_by_text(label_text).filter(visible=True).first.click()
     page.get_by_text(option_text, exact=True).filter(visible=True).first.click()
     page.keyboard.press("Escape")
+
+
+def clear_and_fill(page, selector: str, value: str) -> None:
+    locator = page.locator(selector).first
+    locator.click()
+    locator.fill("")
+    locator.fill(value)
+
+
+def goto_report(page, url: str) -> None:
+    page.goto(url, wait_until="domcontentloaded", timeout=60000)
+    try:
+        page.wait_for_load_state("networkidle", timeout=10000)
+    except Exception:
+        pass
+    page.locator("text='Run Report'").filter(visible=True).first.wait_for(
+        state="visible", timeout=20000
+    )
+
+
+def wait_for_tray(page, timeout: int = 180000) -> None:
+    busy_locators = [
+        page.locator("text=/please wait/i"),
+        page.locator("text=/loading/i"),
+        page.locator(".blockUI:visible"),
+        page.locator(".loading:visible"),
+        page.locator(".spinner:visible"),
+    ]
+    deadline = time.time() + timeout / 1000
+    while time.time() < deadline:
+        if not any(
+            locator.count() > 0 and locator.first.is_visible()
+            for locator in busy_locators
+        ):
+            return
+        page.wait_for_timeout(1000)
+
+
+def configure_daily_report(page, report_type: str, store: str, business_date: date) -> str:
+    date_text = business_date.strftime("%m/%d/%Y")
+    if report_type == "checks":
+        goto_report(page, CHECKS_URL)
+        select_option_by_label(page, "Period :", "Today")
+        clear_and_fill(
+            page,
+            "input:visible[id*='Start'], input:visible[name*='start'], input:visible[placeholder*='Start']",
+            date_text,
+        )
+        clear_and_fill(
+            page,
+            "input:visible[id*='End'], input:visible[name*='end'], input:visible[placeholder*='End']",
+            date_text,
+        )
+        resolved_store = select_store(page, store)
+        select_option_by_label(page, "Tender Type :", "Card")
+        return resolved_store
+
+    goto_report(page, ORDERS_URL)
+    clear_and_fill(page, "#datepicker", date_text)
+    resolved_store = select_store(page, store)
+    select_option_by_label(page, "Service :", "Eat In")
+    return resolved_store
+
+
+def orders_csv(page, timeout: int = 300000) -> bytes:
+    page.locator("text='Run Report'").filter(visible=True).first.click()
+    try:
+        page.wait_for_load_state("networkidle", timeout=30000)
+    except Exception:
+        pass
+    page.wait_for_timeout(2500)
+    wait_for_tray(page, timeout)
+    page.wait_for_selector("#ordersReportTable tbody tr", timeout=timeout)
+    rows = page.locator("#ordersReportTable tbody tr").evaluate_all(
+        """(trs) => trs
+            .map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => td.innerText.replace(/\\s+/g, ' ').trim()))
+            .filter((row) => row.length)"""
+    )
+    if not rows:
+        raise ValueError("Orders report returned no rows.")
+    output = io.StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow([
+        "Time", "ID Site", "Service Destination", "Routing",
+        "Device Orders Report", "Items", "Staff Customer",
+        "Check ID Check Number", "Base (Including Disc.)", "Tax",
+        "Fees", "Total (Excluding Tip)", "Print Status", "Action",
+    ])
+    writer.writerows(rows)
+    return output.getvalue().encode("utf-8")
+
+
+def checks_csv(page, download_dir: str, store: str, timeout: int = 180000) -> bytes:
+    page.locator("text='Run Report'").filter(visible=True).first.click()
+    wait_for_tray(page, timeout)
+    page.wait_for_function(
+        """() => Array.from(document.querySelectorAll('span, a, button, [role="button"]')).some((node) => {
+            const style = window.getComputedStyle(node);
+            const rect = node.getBoundingClientRect();
+            return node.textContent.trim() === 'CSV'
+                && style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && rect.width > 0
+                && rect.height > 0;
+        })""",
+        timeout=timeout,
+    )
+    with page.expect_download(timeout=timeout) as info:
+        page.evaluate(
+            """() => {
+                const nodes = Array.from(document.querySelectorAll('span, a, button, [role="button"]'));
+                const node = nodes.find((candidate) => {
+                    const style = window.getComputedStyle(candidate);
+                    const rect = candidate.getBoundingClientRect();
+                    return candidate.textContent.trim() === 'CSV'
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && rect.width > 0
+                        && rect.height > 0;
+                });
+                if (!node) throw new Error('CSV export control disappeared before it could be clicked.');
+                (node.closest('a, button, [role="button"], [onclick]') || node).click();
+            }"""
+        )
+    path = os.path.join(download_dir, f"checks-{store}.csv")
+    info.value.save_as(path)
+    with open(path, "rb") as handle:
+        return handle.read()
 
 
 def parse_money(value: str) -> float:
@@ -311,7 +448,53 @@ def fetch_overnight_performance(request: OvernightRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "stable-csv-export-1"}
+    return {"status": "ok", "release": "daily-reports-1"}
+
+
+@app.post("/fetch-daily-reports")
+def fetch_daily_reports(request: DailyReportsRequest):
+    clean_stores = list(dict.fromkeys("".join(ch for ch in store if ch.isdigit()) for store in request.stores))
+    clean_stores = [store for store in clean_stores if store]
+    if not clean_stores:
+        raise HTTPException(400, "No valid store numbers were supplied.")
+
+    files = []
+    with tempfile.TemporaryDirectory() as temp_dir:
+        try:
+            with sync_playwright() as playwright:
+                executable = chromium_executable()
+                launch_options = {"headless": True, "args": ["--no-sandbox"]}
+                if executable:
+                    launch_options["executable_path"] = executable
+                browser = playwright.chromium.launch(**launch_options)
+                context = browser.new_context(accept_downloads=True)
+                page = context.new_page()
+                try:
+                    login(page, request.email, request.password)
+                    date_part = request.business_date.strftime("%Y%m%d")
+                    for store in clean_stores:
+                        for report_type in ("orders", "checks"):
+                            resolved_store = configure_daily_report(
+                                page, report_type, store, request.business_date
+                            )
+                            if report_type == "orders":
+                                content = orders_csv(page)
+                            else:
+                                content = checks_csv(page, temp_dir, resolved_store)
+                            files.append({
+                                "store": resolved_store,
+                                "reportType": report_type,
+                                "filename": f"tray_{report_type}_{resolved_store}_{date_part}.csv",
+                                "contentBase64": base64.b64encode(content).decode("ascii"),
+                            })
+                finally:
+                    browser.close()
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            raise HTTPException(502, str(exc)) from exc
+
+    return {"businessDate": request.business_date.isoformat(), "files": files}
 
 
 @app.post("/fetch-appetizers")
