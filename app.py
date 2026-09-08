@@ -234,10 +234,39 @@ def fetch_labor_summary(page, store: str, download_dir: str) -> tuple[str, list[
     select_option_by_label(page, "Group By :", "Hour")
     resolved_store = select_store(page, store)
     run_report.click()
-    csv_export = page.get_by_text("CSV", exact=True).filter(visible=True).first
-    csv_export.wait_for(timeout=60000)
+    # TRAY re-renders the export toolbar after the report finishes. A
+    # text-only Playwright locator can keep waiting on an obsolete CSV span
+    # even while the replacement is visibly on screen. Resolve and click the
+    # current visible export control in the DOM instead.
+    page.wait_for_function(
+        """() => Array.from(document.querySelectorAll('span, a, button, [role="button"]')).some((node) => {
+            const style = window.getComputedStyle(node);
+            const rect = node.getBoundingClientRect();
+            return node.textContent.trim() === 'CSV'
+                && style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && rect.width > 0
+                && rect.height > 0;
+        })""",
+        timeout=60000,
+    )
     with page.expect_download(timeout=60000) as info:
-        csv_export.click()
+        page.evaluate(
+            """() => {
+                const nodes = Array.from(document.querySelectorAll('span, a, button, [role="button"]'));
+                const node = nodes.find((candidate) => {
+                    const style = window.getComputedStyle(candidate);
+                    const rect = candidate.getBoundingClientRect();
+                    return candidate.textContent.trim() === 'CSV'
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden'
+                        && rect.width > 0
+                        && rect.height > 0;
+                });
+                if (!node) throw new Error('CSV export control disappeared before it could be clicked.');
+                (node.closest('a, button, [role="button"], [onclick]') || node).click();
+            }"""
+        )
     path = os.path.join(download_dir, f"labor-summary-{store}.csv")
     info.value.save_as(path)
     week_ending, rows = summarize_overnight_csv(path, resolved_store)
@@ -282,7 +311,7 @@ def fetch_overnight_performance(request: OvernightRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "exact-labor-summary-url-1"}
+    return {"status": "ok", "release": "stable-csv-export-1"}
 
 
 @app.post("/fetch-appetizers")
