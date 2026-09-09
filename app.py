@@ -451,7 +451,7 @@ def fetch_overnight_performance(request: OvernightRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "daily-jobs-3"}
+    return {"status": "ok", "release": "daily-jobs-4"}
 
 
 @app.post("/fetch-daily-reports")
@@ -466,7 +466,7 @@ def fetch_daily_reports(request: DailyReportsRequest):
         try:
             with sync_playwright() as playwright:
                 executable = chromium_executable()
-                launch_options = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote", "--single-process", "--js-flags=--max-old-space-size=96"]}
+                launch_options = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote", "--js-flags=--max-old-space-size=192"]}
                 if executable:
                     launch_options["executable_path"] = executable
                 browser = playwright.chromium.launch(**launch_options)
@@ -506,16 +506,30 @@ JOBS_LOCK = threading.Lock()
 
 
 def _run_daily_job(job_id: str, request: DailyReportsRequest) -> None:
-    try:
-        result = fetch_daily_reports(request)
-        with JOBS_LOCK:
-            JOBS[job_id] = {"status": "succeeded", "result": result}
-    except HTTPException as exc:
-        with JOBS_LOCK:
-            JOBS[job_id] = {"status": "failed", "error": str(exc.detail)}
-    except Exception as exc:
-        with JOBS_LOCK:
-            JOBS[job_id] = {"status": "failed", "error": str(exc)}
+    for attempt in range(2):
+        try:
+            result = fetch_daily_reports(request)
+            with JOBS_LOCK:
+                JOBS[job_id] = {"status": "succeeded", "result": result}
+            return
+        except HTTPException as exc:
+            message = str(exc.detail)
+            browser_closed = "page, context or browser has been closed" in message.lower()
+            if attempt == 0 and browser_closed:
+                time.sleep(2)
+                continue
+            with JOBS_LOCK:
+                JOBS[job_id] = {"status": "failed", "error": message}
+            return
+        except Exception as exc:
+            message = str(exc)
+            browser_closed = "page, context or browser has been closed" in message.lower()
+            if attempt == 0 and browser_closed:
+                time.sleep(2)
+                continue
+            with JOBS_LOCK:
+                JOBS[job_id] = {"status": "failed", "error": message}
+            return
 
 
 @app.post("/start-daily-reports")
