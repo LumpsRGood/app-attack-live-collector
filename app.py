@@ -8,6 +8,8 @@ import subprocess
 import sys
 import tempfile
 import time
+import threading
+import uuid
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -30,7 +32,7 @@ app = FastAPI(title="App Attack Live Collector")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://app-attack-live.lumpsr.chatgpt.site", "https://tracker-24-2-validity.lumpsr.chatgpt.site", "https://isitworth242.lumpsr.chatgpt.site", "https://peachtree-performance.lumpsr.chatgpt.site"],
-    allow_methods=["POST", "OPTIONS"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
 
@@ -495,6 +497,41 @@ def fetch_daily_reports(request: DailyReportsRequest):
             raise HTTPException(502, str(exc)) from exc
 
     return {"businessDate": request.business_date.isoformat(), "files": files}
+
+
+JOBS: dict[str, dict] = {}
+JOBS_LOCK = threading.Lock()
+
+
+def _run_daily_job(job_id: str, request: DailyReportsRequest) -> None:
+    try:
+        result = fetch_daily_reports(request)
+        with JOBS_LOCK:
+            JOBS[job_id] = {"status": "succeeded", "result": result}
+    except HTTPException as exc:
+        with JOBS_LOCK:
+            JOBS[job_id] = {"status": "failed", "error": str(exc.detail)}
+    except Exception as exc:
+        with JOBS_LOCK:
+            JOBS[job_id] = {"status": "failed", "error": str(exc)}
+
+
+@app.post("/start-daily-reports")
+def start_daily_reports(request: DailyReportsRequest):
+    job_id = uuid.uuid4().hex
+    with JOBS_LOCK:
+        JOBS[job_id] = {"status": "running"}
+    threading.Thread(target=_run_daily_job, args=(job_id, request), daemon=True).start()
+    return {"jobId": job_id, "status": "running"}
+
+
+@app.get("/jobs/{job_id}")
+def get_job(job_id: str):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+    if not job:
+        raise HTTPException(404, "Collection job not found.")
+    return job
 
 
 @app.post("/fetch-appetizers")
