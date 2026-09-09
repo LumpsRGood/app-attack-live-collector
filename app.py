@@ -49,11 +49,9 @@ def chromium_executable() -> str | None:
 
 
 def ensure_chromium() -> None:
-    expected = os.path.join(
-        os.path.dirname(__file__),
-        ".venv/lib/python3.12/site-packages/playwright/driver/package/.local-browsers",
-    )
-    if glob.glob(os.path.join(expected, "chromium_headless_shell-*", "chrome-linux*", "headless_shell")):
+    # Render's native build installs Chromium in /opt/render/.cache. Reuse it
+    # instead of downloading a second 172 MB browser during application startup.
+    if chromium_executable():
         return
     subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"], check=True)
 
@@ -451,7 +449,7 @@ def fetch_overnight_performance(request: OvernightRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "daily-jobs-4"}
+    return {"status": "ok", "release": "daily-jobs-5"}
 
 
 @app.post("/fetch-daily-reports")
