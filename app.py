@@ -425,11 +425,12 @@ def fetch_overnight_performance(request: OvernightRequest):
         try:
             with sync_playwright() as playwright:
                 executable = chromium_executable()
-                launch_options = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote", "--js-flags=--max-old-space-size=128"]}
+                launch_options = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote", "--single-process", "--js-flags=--max-old-space-size=96"]}
                 if executable:
                     launch_options["executable_path"] = executable
                 browser = playwright.chromium.launch(**launch_options)
                 context = browser.new_context(accept_downloads=True)
+                context.route("**/*", lambda route: route.abort() if route.request.resource_type in ("image", "media", "font") else route.continue_())
                 page = context.new_page()
                 try:
                     login(page, request.email, request.password)
@@ -450,7 +451,7 @@ def fetch_overnight_performance(request: OvernightRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "daily-jobs-2"}
+    return {"status": "ok", "release": "daily-jobs-3"}
 
 
 @app.post("/fetch-daily-reports")
@@ -465,11 +466,12 @@ def fetch_daily_reports(request: DailyReportsRequest):
         try:
             with sync_playwright() as playwright:
                 executable = chromium_executable()
-                launch_options = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote", "--js-flags=--max-old-space-size=128"]}
+                launch_options = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote", "--single-process", "--js-flags=--max-old-space-size=96"]}
                 if executable:
                     launch_options["executable_path"] = executable
                 browser = playwright.chromium.launch(**launch_options)
                 context = browser.new_context(accept_downloads=True)
+                context.route("**/*", lambda route: route.abort() if route.request.resource_type in ("image", "media", "font") else route.continue_())
                 page = context.new_page()
                 try:
                     login(page, request.email, request.password)
@@ -546,11 +548,12 @@ def fetch_appetizers(request: FetchRequest):
         try:
             with sync_playwright() as playwright:
                 executable = chromium_executable()
-                launch_options = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote", "--js-flags=--max-old-space-size=128"]}
+                launch_options = {"headless": True, "args": ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--no-zygote", "--single-process", "--js-flags=--max-old-space-size=96"]}
                 if executable:
                     launch_options["executable_path"] = executable
                 browser = playwright.chromium.launch(**launch_options)
                 context = browser.new_context(accept_downloads=True)
+                context.route("**/*", lambda route: route.abort() if route.request.resource_type in ("image", "media", "font") else route.continue_())
                 page = context.new_page()
                 try:
                     login(page, request.email, request.password)
