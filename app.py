@@ -29,7 +29,7 @@ CENTRAL = ZoneInfo("America/Chicago")
 app = FastAPI(title="App Attack Live Collector")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://app-attack-live.lumpsr.chatgpt.site", "https://tracker-24-2-validity.lumpsr.chatgpt.site", "https://isitworth242.lumpsr.chatgpt.site"],
+    allow_origins=["https://app-attack-live.lumpsr.chatgpt.site", "https://tracker-24-2-validity.lumpsr.chatgpt.site", "https://isitworth242.lumpsr.chatgpt.site", "https://peachtree-performance.lumpsr.chatgpt.site"],
     allow_methods=["POST", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
