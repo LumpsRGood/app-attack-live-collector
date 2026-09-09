@@ -167,7 +167,7 @@ def select_option_by_label(page, label_text: str, option_text: str) -> None:
     if label.count() > 0:
         container = label.first.locator("xpath=following-sibling::*[1]")
         native = container.locator("select")
-        if native.count() > 0:
+        if native.count() > 0 and native.first.is_visible():
             native.first.select_option(label=option_text)
             return
         container.click()
@@ -448,7 +448,7 @@ def fetch_overnight_performance(request: OvernightRequest):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "release": "daily-reports-1"}
+    return {"status": "ok", "release": "daily-reports-2"}
 
 
 @app.post("/fetch-daily-reports")
